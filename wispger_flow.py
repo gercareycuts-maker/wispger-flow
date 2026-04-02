@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
-"""WispGer Flow — Hold Ctrl+Win to record, release to transcribe and paste."""
+"""WispGer Flow (Cloud) — Hold Ctrl+Win to record, release to transcribe and paste."""
 
 import ctypes
+import io
+import json
 import math
+import os
 import sys
 import threading
 import time
 import tkinter as tk
+import wave
 from datetime import datetime
 from pathlib import Path
 
 import customtkinter as ctk
 import numpy as np
 import pyperclip
+import requests
 import sounddevice as sd
-from faster_whisper import WhisperModel
 from pynput import keyboard
 
 # -- Paths --
 APP_DIR = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
-MODEL_DIR = APP_DIR / "models" / "base-ct2"
+CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home())) / "WispGer"
+CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # -- Font (private load, app-only) --
 for ttf in (APP_DIR / "fonts").glob("*.ttf"):
@@ -42,12 +47,40 @@ TXT2    = "#8888a8"
 DIM     = "#555570"
 BORDER  = "#2a2a45"
 
-# -- DPI-aware screen metrics --
+# -- DPI --
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
     pass
 _screen = ctypes.windll.user32.GetSystemMetrics
+
+# -- Groq API --
+GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+
+
+def _load_api_key():
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text()).get("groq_api_key", "")
+        except Exception:
+            pass
+    return os.environ.get("GROQ_API_KEY", "")
+
+
+def _save_api_key(key):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps({"groq_api_key": key}))
+
+
+def _audio_to_wav(audio, rate=16000):
+    pcm = (audio.flatten() * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(pcm.tobytes())
+    return buf.getvalue()
 
 
 class AudioRecorder:
@@ -82,6 +115,51 @@ class AudioRecorder:
         with self._lock:
             self._frames.append(indata.copy())
         self.level = float(np.sqrt(np.mean(indata ** 2)))
+
+
+class ApiKeyDialog(ctk.CTkToplevel):
+    """First-run dialog to collect Groq API key."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("WispGer Flow — Setup")
+        self.geometry("420x280")
+        self.configure(fg_color=BG)
+        self.attributes("-topmost", True)
+        self.resizable(False, False)
+        self.grab_set()
+
+        self.result = None
+
+        ctk.CTkLabel(self, text="\u223f", font=(F, 36, "bold"), text_color=ACCENT).pack(pady=(24, 8))
+        ctk.CTkLabel(self, text="Enter your Groq API key", font=(F, 16, "bold"), text_color=TXT).pack()
+        ctk.CTkLabel(self, text="Free signup at groq.com → API Keys", font=(F, 11), text_color=DIM).pack(pady=(4, 16))
+
+        self._entry = ctk.CTkEntry(self, width=340, height=38, font=(F, 12), placeholder_text="gsk_...", fg_color=CARD, border_color=BORDER, text_color=TXT)
+        self._entry.pack()
+        self._entry.bind("<Return>", lambda _: self._submit())
+
+        self._err = ctk.CTkLabel(self, text="", font=(F, 10), text_color=RED)
+        self._err.pack(pady=(4, 0))
+
+        ctk.CTkButton(self, text="Save & Start", width=160, height=36, corner_radius=8, font=(F, 12, "bold"), fg_color=ACCENT, hover_color=ACCENTH, command=self._submit).pack(pady=(12, 0))
+
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+    def _submit(self):
+        key = self._entry.get().strip()
+        if not key:
+            self._err.configure(text="Please enter an API key")
+            return
+        if not key.startswith("gsk_"):
+            self._err.configure(text="Key should start with gsk_")
+            return
+        self.result = key
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.destroy()
 
 
 class RecordingOverlay(tk.Toplevel):
@@ -204,6 +282,11 @@ class StatusDot(ctk.CTkFrame):
         self._dot.configure(text_color=AMBER)
         self._lbl.configure(text="Processing...", text_color=AMBER)
 
+    def error(self, msg="Error"):
+        self._pulsing = False
+        self._dot.configure(text_color=RED)
+        self._lbl.configure(text=msg, text_color=RED)
+
     def _pulse(self):
         if not self._pulsing:
             return
@@ -213,7 +296,7 @@ class StatusDot(ctk.CTkFrame):
 
 
 class WispGerFlow(ctk.CTk):
-    def __init__(self, model_dir=str(MODEL_DIR), lang="en", rate=16000):
+    def __init__(self, lang="en", rate=16000):
         super().__init__()
         self.title("WispGer Flow")
         self.geometry("460x680+80+60")
@@ -223,11 +306,8 @@ class WispGerFlow(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         ctk.set_appearance_mode("dark")
 
-        print(f"Loading model from {model_dir}...")
-        self._model = WhisperModel(model_dir, device="cpu", compute_type="int8")
         self._lang = lang
-        print("Model loaded.")
-
+        self._api_key = _load_api_key()
         self._rec = AudioRecorder(rate)
         self._kb = keyboard.Controller()
         self._recording = False
@@ -239,6 +319,21 @@ class WispGerFlow(ctk.CTk):
         self._build_ui()
         self._overlay = RecordingOverlay(self, self._rec)
         keyboard.Listener(on_press=self._press, on_release=self._release, daemon=True).start()
+
+        # Prompt for API key if not set
+        if not self._api_key:
+            self.after(200, self._ask_api_key)
+
+    def _ask_api_key(self):
+        dialog = ApiKeyDialog(self)
+        self.wait_window(dialog)
+        if dialog.result:
+            self._api_key = dialog.result
+            _save_api_key(dialog.result)
+            print("API key saved.")
+        else:
+            print("No API key provided. Exiting.")
+            self.destroy()
 
     def _build_ui(self):
         top = ctk.CTkFrame(self, fg_color=BG2, corner_radius=0, height=60)
@@ -272,7 +367,7 @@ class WispGerFlow(ctk.CTk):
         bot.pack(fill="x", side="bottom")
         bot.pack_propagate(False)
         ctk.CTkFrame(bot, fg_color=BORDER, height=1).pack(fill="x", side="top")
-        ctk.CTkLabel(bot, text="faster-whisper (int8)", font=(F, 9), text_color=DIM).pack(side="left", padx=16)
+        ctk.CTkLabel(bot, text="Groq whisper-large-v3-turbo", font=(F, 9), text_color=DIM).pack(side="left", padx=16)
         self._count = ctk.CTkLabel(bot, text="0 transcriptions", font=(F, 9), text_color=DIM)
         self._count.pack(side="right", padx=16)
 
@@ -322,8 +417,20 @@ class WispGerFlow(ctk.CTk):
         if not self._lock.acquire(blocking=False):
             return
         try:
-            segs, _ = self._model.transcribe(audio.flatten().astype(np.float32), language=self._lang, beam_size=1, vad_filter=True)
-            text = "".join(s.text for s in segs).strip()
+            wav = _audio_to_wav(audio, self._rec.rate)
+            resp = requests.post(
+                GROQ_URL,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                files={"file": ("audio.wav", wav, "audio/wav")},
+                data={"model": "whisper-large-v3-turbo", "language": self._lang, "response_format": "json"},
+                timeout=15,
+            )
+            if resp.status_code == 401:
+                print("Invalid API key.")
+                self.after(0, lambda: self._status.error("Invalid API key"))
+                return
+            resp.raise_for_status()
+            text = resp.json().get("text", "").strip()
             if not text:
                 self.after(0, self._status.ready)
                 return
@@ -335,13 +442,17 @@ class WispGerFlow(ctk.CTk):
             self._kb.release("v")
             self._kb.release(keyboard.Key.ctrl)
             self.after(0, lambda: self._add_card(text, dur))
+        except requests.ConnectionError:
+            print("No internet connection.")
+            self.after(0, lambda: self._status.error("No connection"))
         except Exception as e:
             print(f"Error: {e}")
+            self.after(0, lambda: self._status.error("API error"))
         finally:
             self._lock.release()
             self.after(0, self._status.ready)
 
 
 if __name__ == "__main__":
-    print("\n  WispGer Flow\n  Ctrl+Win to record. Release to paste.\n")
+    print("\n  WispGer Flow (Cloud)\n  Ctrl+Win to record. Release to paste.\n")
     WispGerFlow().mainloop()
