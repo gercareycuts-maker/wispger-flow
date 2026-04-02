@@ -292,6 +292,7 @@ class WispGerFlow(ctk.CTk):
         self._last_texts = []
         self._rec, self._kb = AudioRecorder(), keyboard.Controller()
         self._recording, self._ctrl, self._win, self._t0 = False, False, False, None
+        self._key_lock = threading.Lock()
         self._cards, self._lock, self._view = [], threading.Lock(), "transcriptions"
 
         self._build_ui()
@@ -314,10 +315,10 @@ class WispGerFlow(ctk.CTk):
         c.configure(yscrollcommand=sb.set)
         c.bind("<Configure>", lambda e: c.itemconfigure(wid, width=e.width))
         def scroll(e): c.yview_scroll(int(-1*(e.delta/90)), "units")
-        c.bind("<Enter>", lambda e: c.bind_all("<MouseWheel>", scroll))
+        c.bind("<Enter>", lambda e: c.bind_all("<MouseWheel>", scroll, "+"))
         c.bind("<Leave>", lambda e: c.unbind_all("<MouseWheel>"))
         c.pack(side="left", fill="both", expand=True); sb.pack(side="right", fill="y")
-        return c, inner
+        return inner
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
@@ -384,7 +385,7 @@ class WispGerFlow(ctk.CTk):
                      font=(F,11), text_color=t["dim"], justify="center").pack()
 
         self._dash_container = tk.Frame(self._right, bg=t["bg"])
-        self._dash_canvas, self._dash_frame = self._mk_scroll(self._dash_container, t["bg"])
+        self._dash_frame = self._mk_scroll(self._dash_container, t["bg"])
 
         self._bot = ctk.CTkFrame(self._right, fg_color=t["bg2"], corner_radius=0, height=32)
         self._bot.pack(fill="x", side="bottom"); self._bot.pack_propagate(False)
@@ -568,7 +569,7 @@ class WispGerFlow(ctk.CTk):
         if vis: self._dash_container.pack_forget()
         self._dash_container.destroy()
         self._dash_container = tk.Frame(self._right, bg=t["bg"])
-        self._dash_canvas, self._dash_frame = self._mk_scroll(self._dash_container, t["bg"])
+        self._dash_frame = self._mk_scroll(self._dash_container, t["bg"])
         self._build_dashboard(t)
         if vis: self._dash_container.pack(fill="both", expand=True, before=self._bot)
 
@@ -616,43 +617,65 @@ class WispGerFlow(ctk.CTk):
         self._cards.insert(0, card)
 
     # ---------------------------------------------------------------- Hotkey
+    MIN_RECORDING_SECS = 0.3
+
     def _press(self, key):
-        if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r): self._ctrl = True
-        elif key in (keyboard.Key.cmd, keyboard.Key.cmd_r): self._win = True
-        if self._ctrl and self._win and not self._recording:
-            self._recording, self._t0 = True, time.time()
-            self._rec.start(); self.after(0, self._status.recording); self.after(0, self._overlay.show)
+        with self._key_lock:
+            if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r): self._ctrl = True
+            elif key in (keyboard.Key.cmd, keyboard.Key.cmd_r): self._win = True
+            if self._ctrl and self._win and not self._recording:
+                self._recording, self._t0 = True, time.time()
+                self._rec.start(); self.after(0, self._status.recording); self.after(0, self._overlay.show)
 
     def _release(self, key):
-        both = self._ctrl and self._win
-        if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r): self._ctrl = False
-        elif key in (keyboard.Key.cmd, keyboard.Key.cmd_r): self._win = False
-        if both and self._recording and not (self._ctrl and self._win):
-            self._recording = False; dur = time.time()-self._t0 if self._t0 else 0.0
-            pcm = self._rec.stop()
-            self.after(0, self._overlay.hide); self.after(0, self._status.processing)
-            if pcm: threading.Thread(target=self._transcribe, args=(pcm, dur), daemon=True).start()
-            else: self.after(0, self._status.ready)
+        with self._key_lock:
+            both = self._ctrl and self._win
+            if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r): self._ctrl = False
+            elif key in (keyboard.Key.cmd, keyboard.Key.cmd_r): self._win = False
+            if both and self._recording and not (self._ctrl and self._win):
+                self._recording = False; dur = time.time()-self._t0 if self._t0 else 0.0
+                pcm = self._rec.stop()
+                self.after(0, self._overlay.hide)
+                if not pcm or dur < self.MIN_RECORDING_SECS:
+                    self.after(0, self._status.ready); return
+                self.after(0, self._status.processing)
+                threading.Thread(target=self._transcribe, args=(pcm, dur), daemon=True).start()
 
     def _transcribe(self, pcm, dur):
-        if not self._lock.acquire(blocking=False): return
+        if not self._lock.acquire(blocking=False):
+            self.after(0, lambda: self._status.error("Busy"))
+            self.after(3000, self._status.ready)
+            return
         try:
             resp = requests.post(GROQ_URL, headers={"Authorization": f"Bearer {self._key}"},
                 files={"file": ("audio.wav", self._rec.to_wav(pcm), "audio/wav")},
                 data={"model": GROQ_MODEL, "language": self._lang, "response_format": "json"}, timeout=15)
-            if resp.status_code == 401: self.after(0, lambda: self._status.error("Invalid API key")); return
+            if resp.status_code == 401:
+                self.after(0, lambda: self._status.error("Invalid API key"))
+                self.after(3000, self._status.ready); return
             resp.raise_for_status()
             text = resp.json().get("text","").strip()
-            if not text: return
+            if not text:
+                self.after(0, self._status.ready); return
             print(f"[{dur:.1f}s] {text}")
-            pyperclip.copy(text); time.sleep(0.05)
+            pyperclip.copy(text); time.sleep(0.15)
             self._kb.press(keyboard.Key.ctrl); self._kb.press("v")
             self._kb.release("v"); self._kb.release(keyboard.Key.ctrl)
             self.after(0, lambda: self._add_card(text, dur))
             self.after(0, lambda: self._update_stats(text, dur))
-        except requests.ConnectionError: self.after(0, lambda: self._status.error("No connection"))
-        except Exception as e: print(f"Error: {e}"); self.after(0, lambda: self._status.error("API error"))
-        finally: self._lock.release(); self.after(0, self._status.ready)
+            self.after(0, self._status.ready)
+        except requests.Timeout:
+            self.after(0, lambda: self._status.error("Timed out"))
+            self.after(3000, self._status.ready)
+        except requests.ConnectionError:
+            self.after(0, lambda: self._status.error("No connection"))
+            self.after(3000, self._status.ready)
+        except Exception as e:
+            print(f"Error: {e}")
+            self.after(0, lambda: self._status.error("API error"))
+            self.after(3000, self._status.ready)
+        finally:
+            self._lock.release()
 
 
 if __name__ == "__main__":
