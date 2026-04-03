@@ -1,0 +1,30 @@
+# Build artifacts
+build/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local Whisper models (not needed for cloud version)
+models/
+
+# Legacy files
+wispger_flow.py
+whisper_hotkey_test.py
+mockup.html
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.log

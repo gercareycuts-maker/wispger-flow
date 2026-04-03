@@ -1,0 +1,6 @@
+customtkinter
+pyperclip
+requests
+sounddevice
+pynput
+pillow
