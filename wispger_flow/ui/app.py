@@ -61,6 +61,7 @@ class WispGerFlow(ctk.CTk):
         self._vp = {**default_voice_profile(), **cfg.get("voice_profile", {})}
         self._rec, self._kb = api.AudioRecorder(), keyboard.Controller()
         self._recording, self._ctrl, self._win, self._t0 = False, False, False, None
+        self._alive = True
         self._key_lock = threading.Lock()
         self._hotkey_mod = cfg.get("hotkey_modifier", "ctrl+cmd" if IS_MAC else "ctrl+win")
         self._sounds_on = cfg.get("sounds_enabled", True)
@@ -99,7 +100,17 @@ class WispGerFlow(ctk.CTk):
         else:
             self.after(100, self._poll_emoji)
 
+    def _schedule(self, ms, func):
+        """Safe wrapper for self.after() — no-ops if the window has been destroyed."""
+        if self._alive:
+            try:
+                self.after(ms, func)
+            except Exception:
+                pass
+
     def destroy(self):
+        self._alive = False
+        self._overlay.hide()
         storage.flush_now()
         super().destroy()
 
@@ -981,25 +992,29 @@ class WispGerFlow(ctk.CTk):
         pcm = self._rec.stop()
         if self._sounds_on:
             self._beep(self._tone_stop)
-        self.after(0, self._overlay.hide)
+        self._schedule(0, self._overlay.hide)
         if not pcm or dur < self.MIN_RECORDING_SECS:
-            self.after(0, self._status.ready)
+            self._schedule(0, self._status.ready)
             return
-        self.after(0, self._status.processing)
+        self._schedule(0, self._status.processing)
         threading.Thread(target=self._transcribe, args=(pcm, dur), daemon=True).start()
 
     def _transcribe(self, pcm, dur):
+        if not self._alive:
+            return
         if not self._lock.acquire(blocking=False):
-            self.after(0, lambda: self._status.error("Busy"))
-            self.after(3000, self._status.ready)
+            self._schedule(0, lambda: self._status.error("Busy"))
+            self._schedule(3000, self._status.ready)
             return
         try:
             raw = api.send_transcription(
                 self._key, self._rec.to_wav(pcm), self._lang,
                 build_whisper_prompt(self._vp),
             )
+            if not self._alive:
+                return
             if not raw or raw.lower().strip(".!? ") in transcription.HALLUCINATIONS:
-                self.after(0, self._status.ready)
+                self._schedule(0, self._status.ready)
                 return
             text = transcription.clean_pipeline(raw)
             text = transcription.apply_corrections(text, self._vp.get("corrections", {}))
@@ -1013,18 +1028,18 @@ class WispGerFlow(ctk.CTk):
                 self._kb.press("v")
                 self._kb.release("v")
                 self._kb.release(mod)
-            self.after(0, lambda: self._add_card(text, dur))
-            self.after(0, lambda: self._update_stats(text, dur))
-            self.after(0, lambda: self._update_voice_profile(text))
-            self.after(0, self._status.ready)
-        except PermissionError:
-            self.after(0, lambda: self._status.error("Invalid API key"))
-            self.after(3000, self._status.ready)
-        except Exception as e:
-            msg = "Timed out" if "Timeout" in type(e).__name__ else "No connection" if "ConnectionError" in type(e).__name__ else "API error"
+            self._schedule(0, lambda: self._add_card(text, dur))
+            self._schedule(0, lambda: self._update_stats(text, dur))
+            self._schedule(0, lambda: self._update_voice_profile(text))
+            self._schedule(0, self._status.ready)
+        except api.TranscriptionError as e:
             print(f"Error: {e}")
-            self.after(0, lambda: self._status.error(msg))
-            self.after(3000, self._status.ready)
+            self._schedule(0, lambda: self._status.error(str(e)))
+            self._schedule(3000, self._status.ready)
+        except Exception as e:
+            print(f"Error: {e}")
+            self._schedule(0, lambda: self._status.error("API error"))
+            self._schedule(3000, self._status.ready)
         finally:
             self._lock.release()
 

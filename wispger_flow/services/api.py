@@ -4,6 +4,7 @@ import array
 import io
 import math
 import threading
+import time
 import wave
 
 import requests
@@ -12,6 +13,9 @@ import sounddevice as sd
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 GROQ_MODEL = "whisper-large-v3-turbo"
 WHISPER_PROMPT = "Hello, how are you? I'm doing well. Yes, that sounds great! Let me think about it. Okay, I'll do that."
+
+# Reuse TCP connections across requests
+_session = requests.Session()
 
 
 class AudioRecorder:
@@ -60,21 +64,55 @@ class AudioRecorder:
         return buf.getvalue()
 
 
+class TranscriptionError(Exception):
+    """Raised when transcription fails with a user-friendly message."""
+    def __init__(self, message, retryable=False):
+        super().__init__(message)
+        self.retryable = retryable
+
+
 def send_transcription(api_key, wav_bytes, language, prompt):
-    """POST audio to Groq Whisper API. Returns raw text or raises on error."""
-    resp = requests.post(
-        GROQ_URL,
-        headers={"Authorization": f"Bearer {api_key}"},
-        files={"file": ("audio.wav", wav_bytes, "audio/wav")},
-        data={
-            "model": GROQ_MODEL,
-            "language": language,
-            "response_format": "json",
-            "prompt": prompt,
-        },
-        timeout=8,
-    )
-    if resp.status_code == 401:
-        raise PermissionError("Invalid API key")
-    resp.raise_for_status()
-    return resp.json().get("text", "").strip()
+    """POST audio to Groq Whisper API. Returns raw text or raises TranscriptionError."""
+    last_err = None
+    for attempt in range(2):
+        try:
+            resp = _session.post(
+                GROQ_URL,
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": ("audio.wav", wav_bytes, "audio/wav")},
+                data={
+                    "model": GROQ_MODEL,
+                    "language": language,
+                    "response_format": "json",
+                    "prompt": prompt,
+                },
+                timeout=8,
+            )
+            if resp.status_code == 401:
+                raise TranscriptionError("Invalid API key")
+            if resp.status_code == 429:
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                raise TranscriptionError("Rate limited — try again in a moment", retryable=True)
+            if resp.status_code >= 500:
+                if attempt == 0:
+                    time.sleep(0.5)
+                    continue
+                raise TranscriptionError("Groq server error", retryable=True)
+            resp.raise_for_status()
+            return resp.json().get("text", "").strip()
+        except TranscriptionError:
+            raise
+        except requests.exceptions.Timeout:
+            last_err = TranscriptionError("Timed out", retryable=True)
+            if attempt == 0:
+                continue
+        except requests.exceptions.ConnectionError:
+            last_err = TranscriptionError("No connection", retryable=True)
+            if attempt == 0:
+                time.sleep(0.5)
+                continue
+        except Exception as e:
+            raise TranscriptionError(f"API error: {e}")
+    raise last_err
