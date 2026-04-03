@@ -38,6 +38,59 @@ _QUESTION_STARTERS = {
     "don't", "doesn't", "didn't", "can't", "couldn't", "wouldn't", "shouldn't",
 }
 
+# -- Contraction fixes (Whisper drops apostrophes) --
+_CONTRACTIONS = {
+    "dont": "don't", "cant": "can't", "wont": "won't", "didnt": "didn't",
+    "doesnt": "doesn't", "isnt": "isn't", "arent": "aren't", "wasnt": "wasn't",
+    "werent": "weren't", "havent": "haven't", "hasnt": "hasn't", "hadnt": "hadn't",
+    "wouldnt": "wouldn't", "shouldnt": "shouldn't", "couldnt": "couldn't",
+    "mustnt": "mustn't", "im": "I'm", "ive": "I've", "id": "I'd",
+    "youre": "you're", "youve": "you've", "youd": "you'd", "youll": "you'll",
+    "hes": "he's", "shes": "she's", "thats": "that's",
+    "theres": "there's", "theyre": "they're", "theyve": "they've",
+    "whos": "who's", "whats": "what's", "lets": "let's",
+    "weve": "we've",
+}
+
+# -- Built-in tech term corrections (Whisper lowercases everything) --
+_TECH_TERMS = {
+    "pytorch": "PyTorch", "numpy": "NumPy", "scipy": "SciPy",
+    "javascript": "JavaScript", "typescript": "TypeScript",
+    "github": "GitHub", "gitlab": "GitLab", "postgres": "PostgreSQL",
+    "mongodb": "MongoDB", "kubernetes": "Kubernetes",
+    "docker": "Docker", "fastapi": "FastAPI",
+    "nextjs": "Next.js", "nodejs": "Node.js", "reactjs": "React.js",
+    "openai": "OpenAI", "chatgpt": "ChatGPT",
+    "api": "API", "apis": "APIs", "url": "URL", "urls": "URLs",
+    "html": "HTML", "css": "CSS", "json": "JSON", "yaml": "YAML",
+    "sql": "SQL", "http": "HTTP", "https": "HTTPS", "ssh": "SSH",
+    "aws": "AWS", "gcp": "GCP", "cli": "CLI",
+}
+
+# Pre-compile contraction and tech term patterns for speed
+_CONTRACTION_RE = [(re.compile(r'\b' + re.escape(k) + r'\b', re.IGNORECASE), v) for k, v in _CONTRACTIONS.items()]
+_TECH_TERM_RE = [(re.compile(r'\b' + re.escape(k) + r'\b'), v) for k, v in _TECH_TERMS.items()]
+
+
+def _fix_contractions(text):
+    """Restore apostrophes in common contractions (dont -> don't)."""
+    for pat, repl in _CONTRACTION_RE:
+        text = pat.sub(repl, text)
+    return text
+
+
+def _fix_tech_terms(text):
+    """Correct casing of common tech terms (github -> GitHub)."""
+    for pat, repl in _TECH_TERM_RE:
+        text = pat.sub(repl, text)
+    return text
+
+
+def _remove_stutters(text):
+    """Remove stutters where a short fragment repeats before the full word: 's s so' -> 'so'."""
+    # Only match when the prefix appears at least twice before the full word
+    return re.sub(r'\b(\w{1,2})\s+(\1\s+)+(\1\w+)\b', r'\3', text, flags=re.IGNORECASE)
+
 
 def _fix_article(m):
     article, space, word = m.group(1), m.group(2), m.group(3)
@@ -104,6 +157,9 @@ def clean_pipeline(text):
             else:
                 i += 1
     text = " ".join(words)
+    text = _remove_stutters(text)
+    text = _fix_contractions(text)
+    text = _fix_tech_terms(text)
     text = _add_punctuation(text)
     text = re.sub(r'([.!?])\s+([a-z])', lambda m: m.group(1) + " " + m.group(2).upper(), text)
     if text and text[0].islower():

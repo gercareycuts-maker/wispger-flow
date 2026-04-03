@@ -67,19 +67,19 @@ class TestUpdateVoiceProfile:
         vp = update_voice_profile(vp, "another phrase here", 1)
         assert len(vp["phrases"]) <= 100
 
-    def test_decay_at_50_txns(self):
+    def test_decay_at_75_txns(self):
         vp = default_voice_profile()
         vp["vocab"] = {"python": 10, "react": 2}
-        vp = update_voice_profile(vp, "test", 50)
-        assert vp["vocab"]["python"] == 8.0
-        # "react" at 2 * 0.8 = 1.6 should survive
+        vp = update_voice_profile(vp, "test", 75)
+        assert vp["vocab"]["python"] == 9.0
+        # "react" at 2 * 0.9 = 1.8 should survive
         assert "react" in vp["vocab"]
 
     def test_decay_removes_low_counts(self):
         vp = default_voice_profile()
         vp["vocab"] = {"rareword": 1}
-        vp = update_voice_profile(vp, "test", 50)
-        # 1 * 0.8 = 0.8, rounds to 0.8, which < 1 so deleted
+        vp = update_voice_profile(vp, "test", 75)
+        # 1 * 0.9 = 0.9, rounds to 0.9, which < 1 so deleted
         assert "rareword" not in vp["vocab"]
 
 

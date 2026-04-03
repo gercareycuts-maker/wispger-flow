@@ -109,6 +109,27 @@ class WispGerFlow(ctk.CTk):
             except Exception:
                 pass
 
+    def _confirm(self, title, message, on_yes):
+        """Show a yes/no confirmation dialog."""
+        d = ctk.CTkToplevel(self)
+        d.title(title)
+        d.geometry("340x130")
+        d.attributes("-topmost", True)
+        d.grab_set()
+        d.configure(fg_color=self._theme["bg"])
+        ctk.CTkLabel(d, text=message, font=(F, 12), text_color=self._theme["txt"],
+                     wraplength=300).pack(pady=(20, 16))
+        bf = ctk.CTkFrame(d, fg_color="transparent")
+        bf.pack()
+        def _yes():
+            d.destroy()
+            on_yes()
+        ctk.CTkButton(bf, text="Yes", width=80, height=32, corner_radius=8, font=(F, 11, "bold"),
+                      fg_color=RED, hover_color=REDDIM, command=_yes).pack(side="left", padx=8)
+        ctk.CTkButton(bf, text="Cancel", width=80, height=32, corner_radius=8, font=(F, 11),
+                      fg_color=self._theme["card"], hover_color=self._theme["border"],
+                      text_color=self._theme["txt"], command=d.destroy).pack(side="left", padx=8)
+
     def destroy(self):
         self._alive = False
         self._overlay.hide()
@@ -517,9 +538,11 @@ class WispGerFlow(ctk.CTk):
                 ctk.CTkLabel(cf, text=right, font=(F, 10, "bold"), text_color=TEAL).pack(side="left")
 
                 def _del(w=wrong):
-                    del self._vp["corrections"][w]
-                    storage.save_cfg({"voice_profile": self._vp})
-                    self._rebuild_voice_tab()
+                    def _do_del():
+                        del self._vp["corrections"][w]
+                        storage.save_cfg({"voice_profile": self._vp})
+                        self._rebuild_voice_tab()
+                    self._confirm("Delete Correction", f'Remove "{w}" correction?', _do_del)
 
                 ctk.CTkButton(cf, text="\u2715", width=24, height=24, corner_radius=4, font=(F, 10),
                               fg_color="transparent", hover_color=t["border"], text_color=t["dim"],
@@ -558,9 +581,11 @@ class WispGerFlow(ctk.CTk):
             self._rebuild_voice_tab()
 
     def _reset_voice_profile(self):
-        self._vp = default_voice_profile()
-        storage.save_cfg({"voice_profile": self._vp})
-        self._rebuild_voice_tab()
+        def _do_reset():
+            self._vp = default_voice_profile()
+            storage.save_cfg({"voice_profile": self._vp})
+            self._rebuild_voice_tab()
+        self._confirm("Reset Voice Profile", "This will erase all learned vocabulary,\nphrases, and corrections. Continue?", _do_reset)
 
     def _rebuild_voice_tab(self):
         if hasattr(self, '_voice_container'):
@@ -986,17 +1011,22 @@ class WispGerFlow(ctk.CTk):
             elif key in k2:
                 self._win = False
             if both and self._recording and not (self._ctrl and self._win):
-                self._recording = False
+                # Keep recording during 200ms post-buffer to capture trailing sounds
                 threading.Timer(0.2, self._stop_recording).start()
 
     def _stop_recording(self):
+        with self._key_lock:
+            if not self._recording:
+                return
+            self._recording = False
         dur = time.time() - self._t0 if self._t0 else 0.0
         pcm = self._rec.stop()
         if self._sounds_on:
             self._beep(self._tone_stop)
         self._schedule(0, self._overlay.hide)
         if not pcm or dur < self.MIN_RECORDING_SECS:
-            self._schedule(0, self._status.ready)
+            self._schedule(0, lambda: self._status.error("Too short"))
+            self._schedule(1500, self._status.ready)
             return
         self._schedule(0, self._status.processing)
         threading.Thread(target=self._transcribe, args=(pcm, dur), daemon=True).start()
@@ -1005,7 +1035,7 @@ class WispGerFlow(ctk.CTk):
         if not self._alive:
             return
         if not self._lock.acquire(blocking=False):
-            self._schedule(0, lambda: self._status.error("Busy"))
+            self._schedule(0, lambda: self._status.error("Still processing\u2026"))
             self._schedule(3000, self._status.ready)
             return
         try:

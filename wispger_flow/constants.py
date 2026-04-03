@@ -69,3 +69,6 @@ def _scroll_units(event):
 
 # -- Hotkey label --
 HOTKEY = "Ctrl+Cmd" if IS_MAC else "Ctrl+Win"
+
+# -- Default Whisper prompt (used when voice profile is empty) --
+WHISPER_PROMPT = "Hello, how are you? I'm doing well. Yes, that sounds great! Let me think about it. Okay, I'll do that."

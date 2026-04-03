@@ -1,7 +1,7 @@
 """Voice profile: vocabulary tracking, phrase detection, corrections, prompt building."""
 
 from wispger_flow.core.transcription import FILLERS
-from wispger_flow.services.api import WHISPER_PROMPT
+from wispger_flow.constants import WHISPER_PROMPT
 
 COMMON_WORDS = frozenset(
     "a about after again all also am an and any are as at back be because been before being below between both but by "
@@ -55,10 +55,10 @@ def update_voice_profile(vp, text, total_txns):
     vp["phrases"] = phrases
 
     # Decay every 50 transcriptions
-    if total_txns > 0 and total_txns % 50 == 0:
+    if total_txns > 0 and total_txns % 75 == 0:
         for d in (vp["vocab"], vp["phrases"]):
             for k in list(d):
-                d[k] = round(d[k] * 0.8, 1)
+                d[k] = round(d[k] * 0.9, 1)
                 if d[k] < 1:
                     del d[k]
 

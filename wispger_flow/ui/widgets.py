@@ -131,7 +131,7 @@ class Tooltip:
 
 # -- Recording Overlay --
 class RecordingOverlay(tk.Toplevel):
-    W, H, N, GAP = 180, 56, 20, 2
+    W, H, N, GAP = 220, 56, 18, 2
 
     def __init__(self, parent, rec):
         super().__init__(parent)
@@ -172,7 +172,9 @@ class RecordingOverlay(tk.Toplevel):
         c.create_rectangle(x0, y0 + r, x1, y1 - r, **kw)
 
     def show(self):
+        import time as _time
         self._active, self._ph, self._h = True, 0.0, [0.0] * self.N
+        self._start_time = _time.time()
         self._pos()
         self.deiconify()
         self.lift()
@@ -199,6 +201,11 @@ class RecordingOverlay(tk.Toplevel):
                 x0, (self.H - h) / 2, x0 + bw, (self.H + h) / 2, tags="b", outline="",
                 fill=f"#{int(230 * br):02x}{int(126 * br):02x}{int(34 * br):02x}",
             )
+        import time as _time
+        elapsed = int(_time.time() - self._start_time)
+        time_str = f"{elapsed // 60}:{elapsed % 60:02d}"
+        self._c.create_text(self.W - 18, self.H // 2, text=time_str, fill="#e8e8f0",
+                            font=(F, 11, "bold"), anchor="e", tags="b")
         self.after(25, self._tick)
 
 

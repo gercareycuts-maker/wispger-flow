@@ -13,7 +13,6 @@ import sounddevice as sd
 
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 GROQ_MODEL = "whisper-large-v3-turbo"
-WHISPER_PROMPT = "Hello, how are you? I'm doing well. Yes, that sounds great! Let me think about it. Okay, I'll do that."
 
 # Reuse TCP connections across requests
 _session = requests.Session()

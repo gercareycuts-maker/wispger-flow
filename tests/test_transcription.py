@@ -110,6 +110,65 @@ class TestApplyCorrections:
         assert "TensorFlow" in result
 
 
+class TestContractions:
+    def test_fixes_dont(self):
+        result = clean_pipeline("I dont know")
+        assert "don't" in result
+
+    def test_fixes_im(self):
+        result = clean_pipeline("im going home")
+        assert "I'm" in result
+
+    def test_fixes_cant(self):
+        result = clean_pipeline("I cant do it")
+        assert "can't" in result
+
+    def test_fixes_youre(self):
+        result = clean_pipeline("youre welcome")
+        assert "you're" in result.lower()
+
+    def test_does_not_break_were(self):
+        result = clean_pipeline("they were happy")
+        assert "were" in result.lower()
+        assert "we're" not in result.lower()
+
+
+class TestStutterRemoval:
+    def test_removes_double_stutter(self):
+        result = clean_pipeline("s s so I think")
+        assert result.startswith("So") or result.startswith("so")
+        assert "s s" not in result.lower()
+
+    def test_removes_two_letter_stutter(self):
+        result = clean_pipeline("th th the problem")
+        assert "th th" not in result.lower()
+
+    def test_does_not_remove_single_article(self):
+        result = clean_pipeline("I ate a apple")
+        assert "apple" in result
+
+
+class TestTechTerms:
+    def test_fixes_github(self):
+        result = clean_pipeline("push to github")
+        assert "GitHub" in result
+
+    def test_fixes_api(self):
+        result = clean_pipeline("the api is down")
+        assert "API" in result
+
+    def test_fixes_json(self):
+        result = clean_pipeline("send it as json")
+        assert "JSON" in result
+
+    def test_user_corrections_override_tech_terms(self):
+        result = apply_corrections(
+            clean_pipeline("use pytorch"),
+            {"PyTorch": "PYTORCH_CUSTOM"}
+        )
+        assert "PYTORCH_CUSTOM" in result
+
+
 class TestConstants:
     def test_hallucinations_are_lowercase_ish(self):
         for h in HALLUCINATIONS:

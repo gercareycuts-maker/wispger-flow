@@ -20,9 +20,9 @@ ACHIEVEMENTS = [
     ("um200", "um", 200, "\U0001f914", "The Thinker", "Uhhhhhhhhhhhh...", "roast"),
     ("dup15", "dupes", 15, "\U0001f99c", "Broken Record", "You said the same thing 15x", "roast"),
     ("night25", "night", 25, "\U0001f319", "Night Owl", "Go to bed already", "roast"),
-    ("speed100", "speed", 1, "\U0001f407", "Speed Demon", "Slow down, auctioneer", "roast"),
+    ("speed100", "speed", 10, "\U0001f407", "Speed Demon", "Slow down, auctioneer", "roast"),
     ("tiny50", "tiny", 50, "\U0001f90f", "One Word Wonder", "Could've just typed it", "roast"),
-    ("long60", "long", 1, "\U0001f4d6", "Monologue King", "Sir, this is a Wendy's", "roast"),
+    ("long60", "long", 5, "\U0001f4d6", "Monologue King", "Sir, this is a Wendy's", "roast"),
     ("morning25", "morning", 25, "\u2615", "Morning Person", "Rise and grind", "roast"),
 ]
 
@@ -33,9 +33,9 @@ ACH_HINTS = {
     "um": "Say 'um' or 'uh' {target:,} times across your transcriptions",
     "dupes": "Transcribe the same thing {target} times",
     "night": "Transcribe after midnight {target} times",
-    "speed": "Transcribe 100+ words in a single recording",
+    "speed": "Transcribe 100+ words in a single recording {target} times",
     "tiny": "Transcribe just 1 word {target} times",
-    "long": "Record for 30+ seconds in a single session",
+    "long": "Record for 30+ seconds in a single session {target} times",
     "morning": "Transcribe before 7am {target} times",
 }
 
