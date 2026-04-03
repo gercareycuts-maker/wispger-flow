@@ -2,7 +2,7 @@ name: Build WispGer Flow
 
 on:
   push:
-    branches: [master, cloud-groq]
+    branches: [master]
   workflow_dispatch:
 
 jobs:
