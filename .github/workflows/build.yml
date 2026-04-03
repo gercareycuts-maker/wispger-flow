@@ -39,11 +39,22 @@ jobs:
           else:
               font_path = '/System/Library/Fonts/Apple Color Emoji.ttc'
           try:
-              font = ImageFont.truetype(font_path, 32)
+              font = ImageFont.truetype(font_path, 109)
               for name, char in [('fire', '\U0001f525'), ('rocket', '\U0001f680'), ('trophy', '\U0001f3c6')]:
-                  img = Image.new('RGBA', (40, 40), (0, 0, 0, 0))
-                  draw = ImageDraw.Draw(img)
-                  draw.text((4, 0), char, font=font, embedded_color=True)
+                  tmp = Image.new('RGBA', (300, 300), (0, 0, 0, 0))
+                  draw = ImageDraw.Draw(tmp)
+                  draw.text((80, 80), char, font=font, embedded_color=True)
+                  bbox = tmp.getbbox()
+                  if bbox:
+                      glyph = tmp.crop(bbox)
+                      w, h = glyph.size
+                      scale = 36 / max(w, h)
+                      nw, nh = int(w * scale), int(h * scale)
+                      glyph = glyph.resize((nw, nh), Image.LANCZOS)
+                      img = Image.new('RGBA', (40, 40), (0, 0, 0, 0))
+                      img.paste(glyph, ((40 - nw) // 2, (40 - nh) // 2))
+                  else:
+                      img = Image.new('RGBA', (40, 40), (0, 0, 0, 0))
                   img.save(f'fonts/{name}.png')
           except Exception as e:
               print(f'Emoji generation failed: {e}, using fallback')

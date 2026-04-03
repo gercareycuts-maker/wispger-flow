@@ -13,8 +13,19 @@ if sys.platform == 'win32':
 elif sys.platform == 'darwin':
     hidden += ['pynput.keyboard._darwin']
 
+# Package modules
+hidden += [
+    'wispger_flow', 'wispger_flow.constants',
+    'wispger_flow.core', 'wispger_flow.core.transcription',
+    'wispger_flow.core.voice_profile', 'wispger_flow.core.stats',
+    'wispger_flow.services', 'wispger_flow.services.api',
+    'wispger_flow.services.storage',
+    'wispger_flow.ui', 'wispger_flow.ui.theme', 'wispger_flow.ui.widgets',
+    'wispger_flow.ui.dialogs', 'wispger_flow.ui.app',
+]
+
 a = Analysis(
-    ['wispger_flow.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[
