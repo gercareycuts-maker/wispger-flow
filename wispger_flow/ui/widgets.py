@@ -15,8 +15,29 @@ _ACH_EMOJI_CACHE = {}
 
 
 def render_emoji_images():
-    """Pre-render all unique achievement emoji to PIL Image for full-colour display."""
+    """Load cached emoji PNGs from disk, or render and cache them on first run."""
     from PIL import Image, ImageDraw, ImageFont
+    from wispger_flow.constants import CFG_DIR
+
+    cache_dir = CFG_DIR / "emoji_cache"
+    icons = {icon for _, _, _, icon, _, _, _ in ACHIEVEMENTS}
+
+    # Try loading from disk cache first
+    if cache_dir.exists():
+        all_cached = True
+        for char in icons:
+            path = cache_dir / f"{ord(char):x}.png"
+            if path.exists():
+                try:
+                    _ACH_EMOJI_CACHE[char] = Image.open(path).copy()
+                    continue
+                except Exception:
+                    pass
+            all_cached = False
+        if all_cached:
+            return
+
+    # Render fresh and save to disk
     if IS_WIN:
         font_path = "seguiemj.ttf"
     elif IS_MAC:
@@ -27,10 +48,13 @@ def render_emoji_images():
         font = ImageFont.truetype(font_path, 109) if font_path else None
     except Exception:
         font = None
-    icons = {icon for _, _, _, icon, _, _, _ in ACHIEVEMENTS}
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
     canvas_size = 56
     emoji_size = 44
     for char in icons:
+        if char in _ACH_EMOJI_CACHE:
+            continue
         if font:
             tmp = Image.new("RGBA", (300, 300), (0, 0, 0, 0))
             draw = ImageDraw.Draw(tmp)
@@ -45,6 +69,10 @@ def render_emoji_images():
                 result = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
                 result.paste(glyph, ((canvas_size - nw) // 2, (canvas_size - nh) // 2))
                 _ACH_EMOJI_CACHE[char] = result
+                try:
+                    result.save(cache_dir / f"{ord(char):x}.png")
+                except Exception:
+                    pass
             else:
                 _ACH_EMOJI_CACHE[char] = None
         else:

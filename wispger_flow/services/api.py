@@ -72,7 +72,7 @@ def send_transcription(api_key, wav_bytes, language, prompt):
             "response_format": "json",
             "prompt": prompt,
         },
-        timeout=15,
+        timeout=8,
     )
     if resp.status_code == 401:
         raise PermissionError("Invalid API key")

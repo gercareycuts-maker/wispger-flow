@@ -68,14 +68,14 @@ class WispGerFlow(ctk.CTk):
         self._cards, self._lock, self._view = [], threading.Lock(), "transcriptions"
         self._tabs_stale = set()
 
-        # Pre-render achievement emoji
-        if not _ACH_EMOJI_CACHE:
-            render_emoji_images()
-        from PIL import ImageTk
+        # Pre-render achievement emoji in background
         self._ach_photos = {}
-        for char, pil_img in _ACH_EMOJI_CACHE.items():
-            if pil_img:
-                self._ach_photos[char] = ImageTk.PhotoImage(pil_img)
+        self._emoji_ready = False
+        def _load_emoji():
+            if not _ACH_EMOJI_CACHE:
+                render_emoji_images()
+            self.after(0, self._convert_emoji)
+        threading.Thread(target=_load_emoji, daemon=True).start()
 
         self._build_ui()
         self._load_history()
@@ -85,6 +85,18 @@ class WispGerFlow(ctk.CTk):
         keyboard.Listener(on_press=self._press, on_release=self._release, daemon=True).start()
         if not self._key:
             self.after(200, self._ask_key)
+
+    def _convert_emoji(self):
+        """Convert PIL images to PhotoImage on main thread (called once emoji render is done)."""
+        from PIL import ImageTk
+        for char, pil_img in _ACH_EMOJI_CACHE.items():
+            if pil_img:
+                self._ach_photos[char] = ImageTk.PhotoImage(pil_img)
+        self._emoji_ready = True
+
+    def destroy(self):
+        storage.flush_now()
+        super().destroy()
 
     def _ask_key(self):
         d = ApiKeyDialog(self, self._theme)

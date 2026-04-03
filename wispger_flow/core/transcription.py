@@ -93,15 +93,17 @@ def _add_punctuation(text):
 
 def clean_pipeline(text):
     """Full text cleanup: dedup, punctuation, capitalization, article correction."""
+    words = text.split()
     for n in range(5, 1, -1):
-        words = text.split()
+        lower = [w.lower() for w in words]
         i = 0
         while i + 2 * n <= len(words):
-            if [w.lower() for w in words[i:i + n]] == [w.lower() for w in words[i + n:i + 2 * n]]:
+            if lower[i:i + n] == lower[i + n:i + 2 * n]:
                 words = words[:i + n] + words[i + 2 * n:]
+                lower = lower[:i + n] + lower[i + 2 * n:]
             else:
                 i += 1
-        text = " ".join(words)
+    text = " ".join(words)
     text = _add_punctuation(text)
     text = re.sub(r'([.!?])\s+([a-z])', lambda m: m.group(1) + " " + m.group(2).upper(), text)
     if text and text[0].islower():
